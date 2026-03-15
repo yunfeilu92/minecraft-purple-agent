@@ -16,8 +16,8 @@ class MinecraftAgent:
     """Vision-LLM based Minecraft agent."""
 
     def __init__(self):
-        self.backend = os.getenv("LLM_BACKEND", "claude")
-        self.model = os.getenv("LLM_MODEL", "claude-sonnet-4-20250514")
+        self.backend = os.getenv("LLM_BACKEND", "bedrock")
+        self.model = os.getenv("LLM_MODEL", "us.anthropic.claude-sonnet-4-20250514-v1:0")
         self.call_interval = int(os.getenv("LLM_CALL_INTERVAL", "1"))
 
         self.task_text: str = ""
@@ -32,12 +32,24 @@ class MinecraftAgent:
         self.stuck_counter: int = 0
         self.task_strategy: str = ""
 
-        if self.backend == "claude":
+        self.client = self._create_client()
+
+    def _create_client(self):
+        """Create the appropriate Anthropic client based on backend config."""
+        if self.backend == "bedrock":
+            from anthropic import AnthropicBedrock
+            return AnthropicBedrock(
+                aws_access_key=os.getenv("AWS_ACCESS_KEY_ID"),
+                aws_secret_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
+                aws_session_token=os.getenv("AWS_SESSION_TOKEN"),
+                aws_region=os.getenv("AWS_REGION", "us-east-1"),
+            )
+        elif self.backend == "claude":
             from anthropic import Anthropic
-            self.client = Anthropic()
+            return Anthropic()
         else:
             from openai import OpenAI
-            self.client = OpenAI()
+            return OpenAI()
 
     def init_task(self, text: str, prompt: str = "") -> None:
         """Initialize with task description and create a plan."""
@@ -81,11 +93,15 @@ class MinecraftAgent:
             logger.error(f"LLM call failed at step {step}: {e}")
             return self.last_action or NOOP_ACTION
 
+    @property
+    def _is_anthropic(self) -> bool:
+        return self.backend in ("claude", "bedrock")
+
     def _generate_plan(self, task_text: str) -> list[str]:
         """Use LLM to decompose the task into sub-goals."""
         prompt = PLAN_PROMPT_TEMPLATE.format(task_text=task_text)
         try:
-            if self.backend == "claude":
+            if self._is_anthropic:
                 resp = self.client.messages.create(
                     model=self.model,
                     max_tokens=1024,
@@ -178,7 +194,7 @@ class MinecraftAgent:
             state_summary="\n".join(state_lines) if state_lines else "Starting fresh.",
         )
 
-        if self.backend == "claude":
+        if self._is_anthropic:
             resp = self.client.messages.create(
                 model=self.model,
                 max_tokens=512,
