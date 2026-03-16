@@ -6,7 +6,7 @@ import logging
 from typing import Optional
 from collections import Counter
 
-from models import ActionPayload, NOOP_ACTION, BUTTON_KEYS
+from models import ActionPayload, NOOP_ACTION
 from prompts import SYSTEM_PROMPT, TASK_PROMPT_TEMPLATE, PLAN_PROMPT_TEMPLATE, get_task_strategy
 
 logger = logging.getLogger(__name__)
@@ -239,31 +239,11 @@ class MinecraftAgent:
         return ActionPayload.from_env_dict(action_dict)
 
     def _validate_action(self, action: ActionPayload) -> ActionPayload:
-        """Validate and fix constraint violations in the action."""
-        b = action.buttons
-        # Index mapping: 0=fwd, 1=back, 2=left, 3=right, 4=jump, 5=sneak, 6=sprint
-        # 7=attack, 8=use, 9=drop, 10=inventory, 11-19=hotbar.1-9
-
-        # Fix mutually exclusive buttons
-        if b[0] == 1 and b[1] == 1:  # forward + back
-            b[1] = 0
-        if b[2] == 1 and b[3] == 1:  # left + right
-            b[3] = 0
-
-        # Sprint only works with forward
-        if b[6] == 1 and b[0] == 0:
-            b[6] = 0
-
-        # Only one hotbar slot (indices 11-19)
-        active = [i for i in range(11, 20) if b[i] == 1]
-        if len(active) > 1:
-            for i in active[1:]:
-                b[i] = 0
-
-        # Clamp camera values
-        action.camera[0] = max(-90.0, min(90.0, action.camera[0]))
-        action.camera[1] = max(-180.0, min(180.0, action.camera[1]))
-
+        """Validate compact action — constraints are handled during encoding."""
+        # Compact format encoding already handles mutual exclusion.
+        # Just clamp to valid ranges.
+        action.buttons[0] = max(0, action.buttons[0])
+        action.camera[0] = max(0, min(120, action.camera[0]))
         return action
 
     def _update_history(self, step: int, action: ActionPayload) -> None:
@@ -306,13 +286,9 @@ class MinecraftAgent:
 
     @staticmethod
     def _summarize_action(action: ActionPayload) -> str:
-        """Create a brief text summary of an action for history."""
-        b = action.buttons
-        labels = ["fwd", "back", "left", "right", "jump", "sneak", "sprint",
-                  "atk", "use", "drop", "inv",
-                  "hb1", "hb2", "hb3", "hb4", "hb5", "hb6", "hb7", "hb8", "hb9"]
-        parts = [labels[i] for i in range(len(b)) if b[i] == 1]
-        cam = action.camera
-        if cam[0] != 0 or cam[1] != 0:
-            parts.append(f"cam[{cam[0]:.0f},{cam[1]:.0f}]")
-        return "+".join(parts) if parts else "noop"
+        """Create a brief text summary of a compact action for history."""
+        btn = action.buttons[0]
+        cam = action.camera[0]
+        if btn == 0 and cam == 60:
+            return "noop"
+        return f"b{btn}c{cam}"
