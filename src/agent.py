@@ -6,7 +6,7 @@ import logging
 from typing import Optional
 from collections import Counter
 
-from models import ActionPayload, NOOP_ACTION
+from models import ActionPayload, NOOP_ACTION, BUTTON_KEYS
 from prompts import SYSTEM_PROMPT, TASK_PROMPT_TEMPLATE, PLAN_PROMPT_TEMPLATE, get_task_strategy
 
 logger = logging.getLogger(__name__)
@@ -236,33 +236,33 @@ class MinecraftAgent:
             raw = resp.choices[0].message.content
 
         action_dict = json.loads(self._extract_json(raw))
-        return ActionPayload(action=action_dict)
+        return ActionPayload.from_env_dict(action_dict)
 
     def _validate_action(self, action: ActionPayload) -> ActionPayload:
         """Validate and fix constraint violations in the action."""
-        a = action.action
+        b = action.buttons
+        # Index mapping: 0=fwd, 1=back, 2=left, 3=right, 4=jump, 5=sneak, 6=sprint
+        # 7=attack, 8=use, 9=drop, 10=inventory, 11-19=hotbar.1-9
 
         # Fix mutually exclusive buttons
-        if a.get("forward", 0) == 1 and a.get("back", 0) == 1:
-            a["back"] = 0
-        if a.get("left", 0) == 1 and a.get("right", 0) == 1:
-            a["right"] = 0
+        if b[0] == 1 and b[1] == 1:  # forward + back
+            b[1] = 0
+        if b[2] == 1 and b[3] == 1:  # left + right
+            b[3] = 0
 
         # Sprint only works with forward
-        if a.get("sprint", 0) == 1 and a.get("forward", 0) == 0:
-            a["sprint"] = 0
+        if b[6] == 1 and b[0] == 0:
+            b[6] = 0
 
-        # Only one hotbar slot
-        active_slots = [i for i in range(1, 10) if a.get(f"hotbar.{i}", 0) == 1]
-        if len(active_slots) > 1:
-            for slot in active_slots[1:]:
-                a[f"hotbar.{slot}"] = 0
+        # Only one hotbar slot (indices 11-19)
+        active = [i for i in range(11, 20) if b[i] == 1]
+        if len(active) > 1:
+            for i in active[1:]:
+                b[i] = 0
 
         # Clamp camera values
-        cam = a.get("camera", [0.0, 0.0])
-        cam[0] = max(-90.0, min(90.0, cam[0]))
-        cam[1] = max(-180.0, min(180.0, cam[1]))
-        a["camera"] = cam
+        action.camera[0] = max(-90.0, min(90.0, action.camera[0]))
+        action.camera[1] = max(-180.0, min(180.0, action.camera[1]))
 
         return action
 
@@ -307,22 +307,12 @@ class MinecraftAgent:
     @staticmethod
     def _summarize_action(action: ActionPayload) -> str:
         """Create a brief text summary of an action for history."""
-        a = action.action
-        parts = []
-        if a.get("forward"): parts.append("fwd")
-        if a.get("back"): parts.append("back")
-        if a.get("left"): parts.append("left")
-        if a.get("right"): parts.append("right")
-        if a.get("jump"): parts.append("jump")
-        if a.get("sprint"): parts.append("sprint")
-        if a.get("sneak"): parts.append("sneak")
-        if a.get("attack"): parts.append("atk")
-        if a.get("use"): parts.append("use")
-        if a.get("drop"): parts.append("drop")
-        if a.get("inventory"): parts.append("inv")
-        for i in range(1, 10):
-            if a.get(f"hotbar.{i}"): parts.append(f"hb{i}")
-        cam = a.get("camera", [0, 0])
+        b = action.buttons
+        labels = ["fwd", "back", "left", "right", "jump", "sneak", "sprint",
+                  "atk", "use", "drop", "inv",
+                  "hb1", "hb2", "hb3", "hb4", "hb5", "hb6", "hb7", "hb8", "hb9"]
+        parts = [labels[i] for i in range(len(b)) if b[i] == 1]
+        cam = action.camera
         if cam[0] != 0 or cam[1] != 0:
             parts.append(f"cam[{cam[0]:.0f},{cam[1]:.0f}]")
         return "+".join(parts) if parts else "noop"
