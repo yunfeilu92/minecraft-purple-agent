@@ -17,7 +17,7 @@ class MinecraftAgent:
 
     def __init__(self):
         self.backend = os.getenv("LLM_BACKEND", "bedrock")
-        self.model = os.getenv("LLM_MODEL", "us.anthropic.claude-sonnet-4-20250514-v1:0")
+        self.model = os.getenv("LLM_MODEL", "us.anthropic.claude-opus-4-6-20260616-v1:0")
         self.call_interval = int(os.getenv("LLM_CALL_INTERVAL", "1"))
 
         self.task_text: str = ""
