@@ -10,6 +10,7 @@ COPY pyproject.toml ./
 RUN --mount=type=cache,target=/home/agentbeats/.cache/uv,uid=1000 \
     uv sync --no-dev --no-install-project
 
+COPY README.md ./
 COPY src src
 
 ENTRYPOINT ["uv", "run", "src/server.py"]
