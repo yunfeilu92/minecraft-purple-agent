@@ -76,15 +76,20 @@ TASK_PROMPT_TEMPLATE = """\
 Step: {step} / {max_steps}
 {state_summary}
 
-# What To Do
-1. Analyze the screenshot: What blocks/items/mobs/terrain do you see? Where are you? What's in your hotbar?
-2. Consider your current sub-goal and plan progress.
-3. Decide the single best action to make progress.
-4. If you seem stuck (repeating same action with no progress), try a DIFFERENT approach:
-   - Turn camera to look around
-   - Move in a different direction
-   - Try a different tool/item
-   - Jump to get unstuck
+# CRITICAL RULES
+- Output ONLY a valid JSON action object. No text, no explanation.
+- Be DECISIVE. Pick ONE clear action each step.
+- HOLD actions for multiple steps: mining requires attack=1 for 10+ consecutive steps.
+- For "drop" tasks: just set drop=1 immediately.
+- For "look at sky" tasks: set camera to [-10.0, 0.0] every step until looking up.
+- For "throw" tasks: select the item (hotbar), then use=1 to throw.
+- For "place" tasks: select block (hotbar), look at ground, use=1.
+- For "collect" tasks: select tool (hotbar), face block, attack=1 and HOLD for many steps.
+- For "build" tasks: select material (hotbar), look at surface, use=1 repeatedly.
+- For "find" tasks: move forward with sprint, turn camera to scan around.
+- For "combat" tasks: select weapon (hotbar), approach enemy, attack=1 repeatedly.
+- Items are already in your hotbar (given via /give). Check hotbar in screenshot.
+- NEVER output all zeros (noop) - always do something purposeful.
 
 Output ONLY the JSON action object.
 """
