@@ -65,9 +65,13 @@ def get_scripted_action(task_text: str, step: int) -> Optional[dict]:
     if any(w in text for w in ["build", "stack", "pillar"]):
         return _script_build(step, text)
 
-    # === COMBAT ===
-    if any(w in text for w in ["defeat", "combat", "hunt", "shoot", "fend off"]):
-        return _script_combat(step, text)
+    # === COMBAT (task-specific) ===
+    if any(w in text for w in ["defeat", "combat", "fend off"]):
+        return _script_combat_melee(step)  # weapon already in mainhand via /replaceitem
+    if "hunt" in text:
+        return _script_combat_hunt(step, text)  # weapon via /give = hotbar.1
+    if "shoot" in text:
+        return _script_combat_ranged(step)  # bow via /give = hotbar.1
 
     # === DECORATION ===
     if "light up" in text or "torch" in text:
@@ -142,28 +146,32 @@ def _script_collect_dirt(step: int) -> dict:
 
 
 def _script_collect_grass(step: int) -> dict:
-    """Grass: shears in hotbar.1, tall_grass spawned at y+1 around player.
-    Shears on grass = attack (left click) to break, then pickup."""
+    """Grass: shears in hotbar.1, tall_grass at y+1 in 7x7 area around player.
+    Shears break grass instantly with attack. Need to look UP more (grass is above feet)."""
     if step == 0: return _base(**{"hotbar.1": 1})
-    c = step % 30
-    if c < 2: return _base(camera=[-3.0, 0.0])  # Look slightly up (grass is at y+1)
-    if c < 12: return _base(attack=1)  # Break grass
-    if c < 15: return _base(forward=1)  # Walk to pick up + find more
-    if c < 18: return _base(camera=[0.0, 30.0])  # Turn to find more grass
-    if c < 20: return _base(camera=[-3.0, 0.0])  # Look at grass level
+    if step < 5: return _base(camera=[-5.0, 0.0])  # Look up to grass level
+    c = step % 25
+    if c < 3: return _base(attack=1)  # Break grass (instant with shears)
+    if c < 5: return _base(forward=1)  # Move to pick up + next grass
+    if c < 8: return _base(attack=1)  # Break more
+    if c < 10: return _base(camera=[0.0, 25.0])  # Turn to find more
+    if c < 12: return _base(forward=1)
+    if c < 15: return _base(attack=1)
+    if c < 17: return _base(camera=[0.0, -30.0])  # Turn other way
+    if c < 19: return _base(forward=1)
     return _base(attack=1)
 
 
 def _script_collect_wood(step: int) -> dict:
-    """Wood: axe in hotbar.1, oak_log filled at ~1 ~ ~1 to ~5 ~10 ~5 (right in front+up).
-    Just face the logs and hold attack."""
+    """Wood: axe in hotbar.1, oak_log filled at ~1 ~ ~1 to ~5 ~10 ~5.
+    Logs are 1 block away. Walk into them and hold attack for long time."""
     if step == 0: return _base(**{"hotbar.1": 1})
-    c = step % 40
-    if c < 2: return _base(camera=[0.0, 0.0])  # Face forward (logs are in front)
-    if c < 25: return _base(attack=1)  # Chop wood
-    if c < 28: return _base(forward=1, jump=1)  # Pick up drops + get closer
-    if c < 30: return _base(camera=[5.0, 0.0])  # Adjust aim
-    return _base(attack=1)  # Keep chopping
+    if step < 3: return _base(forward=1)  # Walk right into the log wall
+    c = step % 50
+    if c < 35: return _base(attack=1)  # Hold attack for a LONG time (wood takes ~20 ticks)
+    if c < 40: return _base(forward=1, jump=1)  # Pick up drops, move deeper into logs
+    if c < 43: return _base(camera=[3.0, 0.0])  # Look at next log
+    return _base(attack=1)
 
 
 def _script_collect_wool(step: int) -> dict:
@@ -336,17 +344,42 @@ def _script_build(step: int, text: str) -> dict:
 # COMBAT
 # ============================================================
 
-def _script_combat(step: int, text: str) -> dict:
-    if step == 0: return _base(**{"hotbar.1": 1})
+def _script_combat_melee(step: int) -> dict:
+    """Combat tasks where weapon is already in mainhand via /replaceitem.
+    DO NOT select hotbar - it would replace the equipped weapon!
+    Mobs summoned 2-3 blocks away. Rush forward and attack."""
+    # No hotbar selection! Weapon already equipped.
+    c = step % 20
+    if c < 2: return _base(camera=[0.0, 20.0])  # Quick scan
+    if c < 8: return _base(forward=1, sprint=1, attack=1)  # Rush + attack
+    if c < 10: return _base(forward=1, jump=1, attack=1)  # Crit hit
+    if c < 15: return _base(forward=1, attack=1)  # Keep attacking
+    if c < 17: return _base(camera=[0.0, -30.0], attack=1)  # Turn + attack
+    return _base(forward=1, sprint=1, attack=1)
 
-    c = step % 25
-    if c < 3: return _base(camera=[0.0, 35.0], attack=1)
+
+def _script_combat_hunt(step: int, text: str) -> dict:
+    """Hunt tasks: weapon via /give in hotbar.1. Select it then attack."""
+    if step == 0: return _base(**{"hotbar.1": 1})  # Select sword
+    c = step % 20
+    if c < 2: return _base(camera=[0.0, 20.0])
     if c < 8: return _base(forward=1, sprint=1, attack=1)
     if c < 10: return _base(forward=1, jump=1, attack=1)
-    if c < 16: return _base(forward=1, attack=1)
-    if c < 18: return _base(camera=[0.0, -45.0], attack=1)
-    if c < 22: return _base(forward=1, sprint=1, attack=1)
-    return _base(forward=1, sprint=1, jump=1, attack=1)
+    if c < 15: return _base(forward=1, attack=1)
+    if c < 17: return _base(camera=[0.0, -30.0], attack=1)
+    return _base(forward=1, sprint=1, attack=1)
+
+
+def _script_combat_ranged(step: int) -> dict:
+    """Shoot tasks: bow in hotbar.1. Hold use to charge, release to shoot."""
+    if step == 0: return _base(**{"hotbar.1": 1})
+    c = step % 20
+    if c < 3: return _base(camera=[0.0, 15.0])  # Scan
+    if c < 5: return _base(camera=[-3.0, 0.0])  # Aim up slightly
+    if c < 13: return _base(use=1)  # Charge bow
+    if c == 13: return _base()  # Release to shoot
+    if c < 17: return _base(camera=[0.0, 20.0])  # Scan for next
+    return _base(use=1)
 
 
 # ============================================================
@@ -373,13 +406,19 @@ def _script_lay_carpet(step: int) -> dict:
 
 
 def _script_clean_weeds(step: int) -> dict:
-    """Shears in hotbar.1, tall_grass at y+1 around player. Attack to break."""
+    """Shears in hotbar.1, tall_grass at y+1 around player. Attack to break.
+    Same pattern as collect_grass - need to look UP to hit tall_grass."""
     if step == 0: return _base(**{"hotbar.1": 1})
-    c = step % 20
-    if c < 2: return _base(camera=[-3.0, 0.0])  # Look at grass level (y+1)
-    if c < 10: return _base(attack=1)
-    if c < 13: return _base(forward=1, camera=[0.0, 25.0])
-    if c < 15: return _base(camera=[-3.0, 0.0])
+    if step < 5: return _base(camera=[-5.0, 0.0])  # Look up to grass level
+    c = step % 25
+    if c < 3: return _base(attack=1)
+    if c < 5: return _base(forward=1)
+    if c < 8: return _base(attack=1)
+    if c < 10: return _base(camera=[0.0, 25.0])
+    if c < 12: return _base(forward=1)
+    if c < 15: return _base(attack=1)
+    if c < 17: return _base(camera=[0.0, -30.0])
+    if c < 19: return _base(forward=1)
     return _base(attack=1)
 
 
