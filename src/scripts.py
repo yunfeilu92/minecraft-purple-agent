@@ -99,14 +99,19 @@ def _base_action(**overrides) -> dict:
 # === MOTION SCRIPTS ===
 
 def _script_drop_item(step: int) -> dict:
-    """Drop items from inventory. Cycle through hotbar slots and drop."""
-    cycle = step % 20
-    if cycle < 2:
-        # Select hotbar slot (cycle through them)
-        slot = (step // 20) % 9 + 1
-        return _base_action(**{f"hotbar.{slot}": 1})
-    else:
+    """Drop items from inventory. Select slot 1 first, then drop repeatedly."""
+    if step == 0:
+        return _base_action(**{"hotbar.1": 1})  # Select first item
+    elif step < 5:
+        return _base_action(drop=1)  # Drop it
+    elif step == 5:
+        return _base_action(**{"hotbar.2": 1})  # Select second item
+    elif step < 10:
         return _base_action(drop=1)
+    elif step == 10:
+        return _base_action(**{"hotbar.3": 1})
+    else:
+        return _base_action(drop=1)  # Keep dropping
 
 
 def _script_look_at_sky(step: int) -> dict:
@@ -136,29 +141,50 @@ def _script_throw_snowball(step: int) -> dict:
 # === MINING / COLLECTING ===
 
 def _script_mine_or_collect(step: int, text: str) -> dict:
-    """Generic mining/collecting: select tool, face block, hold attack."""
-    phase = step % 60
+    """Mining/collecting with better block targeting and tool selection."""
+    text_lower = text.lower()
 
-    if phase == 0:
-        # Select tool from hotbar.1 (usually the tool)
+    # Determine if we should look down (ground blocks) or forward (trees, ores)
+    look_down = any(w in text_lower for w in ["dirt", "grass", "sand", "gravel"])
+    look_forward = any(w in text_lower for w in ["wood", "log", "tree", "ore", "stone", "obsidian", "iron", "diamond"])
+
+    # Select tool on first step
+    if step == 0:
         return _base_action(**{"hotbar.1": 1})
-    elif phase < 3:
-        # Look slightly down toward blocks
-        return _base_action(camera=[5.0, 0.0])
-    elif phase < 30:
-        # Hold attack to mine
-        return _base_action(attack=1)
-    elif phase < 33:
-        # Walk forward to pick up drops and find next block
-        return _base_action(forward=1)
-    elif phase < 36:
-        # Look around for more blocks
-        return _base_action(camera=[0.0, 20.0])
-    elif phase < 39:
-        return _base_action(camera=[-3.0, 0.0])
+
+    # Mining cycle: mine → pick up → reposition → mine again
+    cycle = step % 45
+
+    if look_down:
+        # Dig downward (dirt, grass, sand)
+        if cycle < 2:
+            return _base_action(camera=[10.0, 0.0])  # Look at ground
+        elif cycle < 20:
+            return _base_action(attack=1)  # Dig
+        elif cycle < 25:
+            return _base_action(forward=1, jump=1)  # Move + pick up items
+        elif cycle < 28:
+            return _base_action(camera=[0.0, 30.0])  # Turn to new spot
+        elif cycle < 30:
+            return _base_action(camera=[10.0, 0.0])  # Look down again
+        else:
+            return _base_action(attack=1)  # Dig more
     else:
-        # Continue mining
-        return _base_action(attack=1)
+        # Mine forward (trees, ores, stone)
+        if cycle < 2:
+            return _base_action(camera=[3.0, 0.0])  # Look slightly down
+        elif cycle < 25:
+            return _base_action(attack=1, forward=1)  # Mine + walk into block
+        elif cycle < 28:
+            return _base_action(forward=1)  # Pick up drops
+        elif cycle < 32:
+            return _base_action(camera=[0.0, 45.0])  # Turn to find more
+        elif cycle < 35:
+            return _base_action(forward=1, sprint=1)  # Move to next block
+        elif cycle < 37:
+            return _base_action(camera=[3.0, -20.0])  # Readjust view
+        else:
+            return _base_action(attack=1)  # Mine more
 
 
 # === BUILDING ===
@@ -197,29 +223,41 @@ def _script_build(step: int, text: str) -> dict:
 # === COMBAT ===
 
 def _script_combat(step: int, text: str) -> dict:
-    """Generic combat: select weapon, approach enemy, attack."""
-    phase = step % 40
+    """Combat: select weapon, aggressively search and attack."""
+    text_lower = text.lower()
 
-    if phase == 0:
-        return _base_action(**{"hotbar.1": 1})  # Select weapon (usually sword in slot 1)
-    elif phase < 5:
-        # Scan for enemy by turning
-        return _base_action(camera=[0.0, 25.0])
-    elif phase < 20:
-        # Sprint toward enemy and attack
+    # Select weapon on first step
+    if step == 0:
+        # Most combat tasks give weapon in slot 1
+        return _base_action(**{"hotbar.1": 1})
+
+    # Aggressive search + attack pattern
+    cycle = step % 30
+
+    if cycle < 3:
+        # Scan: turn to find enemy
+        return _base_action(camera=[0.0, 30.0], attack=1)
+    elif cycle < 8:
+        # Sprint forward + attack (closes distance)
         return _base_action(forward=1, sprint=1, attack=1)
-    elif phase < 22:
-        # Jump for critical hit
+    elif cycle < 10:
+        # Jump + attack for critical hit
         return _base_action(forward=1, jump=1, attack=1)
-    elif phase < 30:
-        # Continue attacking
+    elif cycle < 18:
+        # Keep attacking while moving forward
         return _base_action(forward=1, attack=1)
-    elif phase < 35:
-        # Strafe and turn to reposition
-        return _base_action(left=1, camera=[0.0, 15.0], attack=1)
-    else:
-        # Attack more
+    elif cycle < 20:
+        # Scan other direction
+        return _base_action(camera=[0.0, -40.0], attack=1)
+    elif cycle < 25:
+        # Sprint + attack
         return _base_action(forward=1, sprint=1, attack=1)
+    elif cycle < 27:
+        # Look around more
+        return _base_action(camera=[-5.0, 20.0])
+    else:
+        # Sprint toward and attack
+        return _base_action(forward=1, sprint=1, jump=1, attack=1)
 
 
 # === TOOL USE ===
