@@ -1,40 +1,67 @@
 """Scripted action sequences for known simple tasks.
 
-Instead of relying on LLM vision for every step, these scripts
-execute pre-defined action sequences that are known to work for
-specific task types. Much more reliable than LLM frame-by-frame control.
+V4: Fixed based on task config analysis:
+- collect_grass/clean_weeds: grass is at ~3 ~1 ~3 (above), need to look up slightly + attack
+- collect_wood: oak_log filled at ~1 ~ ~1 ~5 ~10 ~5, right in front, just face forward + attack
+- collect_wool: sheep summoned at ~2, need shears + USE (not attack)
+- drink_potion: potion in hotbar.1, just hold use
+- make_fire: flint_and_steel already in mainhand (no hotbar select needed), look down + use
+- use_bow: hold use to charge, then release (alternate use=1 and use=0)
+- carve_pumpkin: pumpkin is in INVENTORY not world. Need to place first, then use shears
 """
 
 from typing import Optional
 
 
 def get_scripted_action(task_text: str, step: int) -> Optional[dict]:
-    """Return a scripted env-format action for known tasks, or None to fall back to LLM.
-
-    Args:
-        task_text: The task description text
-        step: Current step number (0-indexed)
-
-    Returns:
-        An env-format action dict, or None if no script matches.
-    """
+    """Return a scripted env-format action for known tasks, or None for LLM fallback."""
     text = task_text.lower()
 
-    # === MOTION TASKS ===
+    # === MOTION ===
     if "drop" in text and "item" in text:
         return _script_drop_item(step)
-
     if "look" in text and "sky" in text:
         return _script_look_at_sky(step)
-
     if "throw" in text and "snowball" in text:
         return _script_throw_snowball(step)
 
-    # === MINING / COLLECTING ===
+    # === MINING / COLLECTING (task-specific) ===
+    if "collect grass" in text or ("grass" in text and "collect" in text):
+        return _script_collect_grass(step)
+    if "collect wood" in text or "collect oak" in text or ("wood" in text and "collect" in text):
+        return _script_collect_wood(step)
+    if "shear sheep" in text or "collect wool" in text:
+        return _script_collect_wool(step)
+    if "collect dirt" in text:
+        return _script_collect_dirt(step)
     if any(w in text for w in ["collect", "mine", "cut stone", "shear"]):
-        return _script_mine_or_collect(step, text)
+        return _script_mine_generic(step, text)
+
+    # === TOOL USE (task-specific) ===
+    if "drink" in text and "potion" in text:
+        return _script_drink_potion(step)
+    if "sleep" in text and "bed" in text:
+        return _script_sleep_in_bed(step)
+    if "flint and steel" in text or "ignite" in text or "make fire" in text:
+        return _script_make_fire(step)
+    if "use bow" in text or ("bow" in text and "weapon" in text):
+        return _script_use_bow(step)
+    if "plant" in text and ("wheat" in text or "seed" in text):
+        return _script_plant(step)
+    if "place" in text and "item frame" in text:
+        return _script_place_item(step)
+    if "carve" in text and "pumpkin" in text:
+        return _script_carve_pumpkin(step)
+    if "use trident" in text or "trident" in text:
+        return _script_use_trident(step)
+    if "use lead" in text or "lead" in text and "animal" in text:
+        return _script_use_lead(step)
+    if "use shield" in text or "shield" in text and "block" in text:
+        return _script_use_shield(step)
 
     # === BUILDING ===
+    if "dig" in text and "down" in text:
+        return _script_dig_down(step)
     if any(w in text for w in ["build", "stack", "pillar"]):
         return _script_build(step, text)
 
@@ -42,35 +69,13 @@ def get_scripted_action(task_text: str, step: int) -> Optional[dict]:
     if any(w in text for w in ["defeat", "combat", "hunt", "shoot", "fend off"]):
         return _script_combat(step, text)
 
-    # === TOOL USE - simple ones ===
-    if "drink" in text and "potion" in text:
-        return _script_drink_potion(step)
-
-    if "sleep" in text and "bed" in text:
-        return _script_sleep_in_bed(step)
-
-    if "flint and steel" in text or "ignite" in text or "make fire" in text:
-        return _script_use_flint(step)
-
-    if "plant" in text and ("wheat" in text or "seed" in text):
-        return _script_plant(step)
-
-    if "place" in text and "item frame" in text:
-        return _script_place_item(step)
-
-    if "carve" in text and "pumpkin" in text:
-        return _script_carve_pumpkin(step)
-
     # === DECORATION ===
     if "light up" in text or "torch" in text:
         return _script_place_torches(step)
-
     if "lay" in text and "carpet" in text:
         return _script_lay_carpet(step)
-
     if "clean" in text and "weed" in text:
         return _script_clean_weeds(step)
-
     if "decorate" in text:
         return _script_decorate(step)
 
@@ -78,13 +83,11 @@ def get_scripted_action(task_text: str, step: int) -> Optional[dict]:
     if "explore" in text or "find" in text or "locate" in text:
         return _script_explore(step)
 
-    # No script match — fall back to LLM
     return None
 
 
-def _base_action(**overrides) -> dict:
-    """Create a base action with all zeros, then apply overrides."""
-    action = {
+def _base(**overrides) -> dict:
+    a = {
         "forward": 0, "back": 0, "left": 0, "right": 0,
         "jump": 0, "sneak": 0, "sprint": 0,
         "attack": 0, "use": 0, "drop": 0, "inventory": 0,
@@ -92,342 +95,316 @@ def _base_action(**overrides) -> dict:
         "hotbar.5": 0, "hotbar.6": 0, "hotbar.7": 0, "hotbar.8": 0, "hotbar.9": 0,
         "camera": [0.0, 0.0],
     }
-    action.update(overrides)
-    return action
+    a.update(overrides)
+    return a
 
 
-# === MOTION SCRIPTS ===
+# ============================================================
+# MOTION
+# ============================================================
 
 def _script_drop_item(step: int) -> dict:
-    """Drop items from inventory. Select slot 1 first, then drop repeatedly."""
-    if step == 0:
-        return _base_action(**{"hotbar.1": 1})  # Select first item
-    elif step < 5:
-        return _base_action(drop=1)  # Drop it
-    elif step == 5:
-        return _base_action(**{"hotbar.2": 1})  # Select second item
-    elif step < 10:
-        return _base_action(drop=1)
-    elif step == 10:
-        return _base_action(**{"hotbar.3": 1})
-    else:
-        return _base_action(drop=1)  # Keep dropping
+    if step == 0: return _base(**{"hotbar.1": 1})
+    if step < 10: return _base(drop=1)
+    if step == 10: return _base(**{"hotbar.2": 1})
+    if step < 20: return _base(drop=1)
+    if step == 20: return _base(**{"hotbar.3": 1})
+    return _base(drop=1)
 
 
 def _script_look_at_sky(step: int) -> dict:
-    """Look up at the sky progressively."""
-    if step < 30:
-        return _base_action(camera=[-8.0, 0.0])  # Look up
-    else:
-        # Keep looking up and slowly rotate to show sky panorama
-        return _base_action(camera=[-2.0, 5.0])
+    if step < 20:
+        return _base(camera=[-10.0, 0.0])
+    return _base(camera=[-1.0, 3.0])  # Slowly pan for video
 
 
 def _script_throw_snowball(step: int) -> dict:
-    """Find snowball in hotbar and throw it."""
-    cycle = step % 15
-    if cycle < 3:
-        # Try different hotbar slots to find snowball
-        slot = (step // 15) % 9 + 1
-        return _base_action(**{f"hotbar.{slot}": 1})
-    elif cycle < 5:
-        # Look slightly up for throwing
-        return _base_action(camera=[-5.0, 0.0])
-    else:
-        # Throw (use = right click)
-        return _base_action(use=1)
+    # Snowball is first /give item = hotbar.1
+    if step == 0: return _base(**{"hotbar.1": 1})
+    if step < 3: return _base(camera=[-5.0, 0.0])  # Aim slightly up
+    return _base(use=1)  # Throw
 
 
-# === MINING / COLLECTING ===
+# ============================================================
+# MINING / COLLECTING (task-specific)
+# ============================================================
 
-def _script_mine_or_collect(step: int, text: str) -> dict:
-    """Mining/collecting with better block targeting and tool selection."""
-    text_lower = text.lower()
-
-    # Determine if we should look down (ground blocks) or forward (trees, ores)
-    look_down = any(w in text_lower for w in ["dirt", "grass", "sand", "gravel"])
-    look_forward = any(w in text_lower for w in ["wood", "log", "tree", "ore", "stone", "obsidian", "iron", "diamond"])
-
-    # Select tool on first step
-    if step == 0:
-        return _base_action(**{"hotbar.1": 1})
-
-    # Mining cycle: mine → pick up → reposition → mine again
-    cycle = step % 45
-
-    if look_down:
-        # Dig downward (dirt, grass, sand)
-        if cycle < 2:
-            return _base_action(camera=[10.0, 0.0])  # Look at ground
-        elif cycle < 20:
-            return _base_action(attack=1)  # Dig
-        elif cycle < 25:
-            return _base_action(forward=1, jump=1)  # Move + pick up items
-        elif cycle < 28:
-            return _base_action(camera=[0.0, 30.0])  # Turn to new spot
-        elif cycle < 30:
-            return _base_action(camera=[10.0, 0.0])  # Look down again
-        else:
-            return _base_action(attack=1)  # Dig more
-    else:
-        # Mine forward (trees, ores, stone)
-        if cycle < 2:
-            return _base_action(camera=[3.0, 0.0])  # Look slightly down
-        elif cycle < 25:
-            return _base_action(attack=1, forward=1)  # Mine + walk into block
-        elif cycle < 28:
-            return _base_action(forward=1)  # Pick up drops
-        elif cycle < 32:
-            return _base_action(camera=[0.0, 45.0])  # Turn to find more
-        elif cycle < 35:
-            return _base_action(forward=1, sprint=1)  # Move to next block
-        elif cycle < 37:
-            return _base_action(camera=[3.0, -20.0])  # Readjust view
-        else:
-            return _base_action(attack=1)  # Mine more
+def _script_collect_dirt(step: int) -> dict:
+    """Dirt: shovel in hotbar.1, dig ground beneath."""
+    if step == 0: return _base(**{"hotbar.1": 1})
+    c = step % 35
+    if c < 2: return _base(camera=[8.0, 0.0])
+    if c < 18: return _base(attack=1)
+    if c < 22: return _base(forward=1, jump=1)
+    if c < 25: return _base(camera=[0.0, 40.0])
+    if c < 27: return _base(camera=[8.0, 0.0])
+    return _base(attack=1)
 
 
-# === BUILDING ===
-
-def _script_build(step: int, text: str) -> dict:
-    """Generic building: select material, look at surface, place blocks."""
-    phase = step % 30
-
-    if phase == 0:
-        return _base_action(**{"hotbar.1": 1})  # Select building material
-    elif phase < 3:
-        # Look down at ground to place
-        return _base_action(camera=[8.0, 0.0])
-    elif phase < 8:
-        # Place blocks
-        return _base_action(use=1, sneak=1)
-    elif phase < 11:
-        # Move slightly to place next block
-        return _base_action(forward=1, sneak=1)
-    elif phase < 13:
-        # Turn slightly
-        return _base_action(camera=[0.0, 15.0], sneak=1)
-    elif phase < 18:
-        # Place more blocks
-        return _base_action(use=1, sneak=1)
-    elif phase < 21:
-        # Move again
-        return _base_action(right=1, sneak=1)
-    elif phase < 23:
-        return _base_action(camera=[0.0, -15.0], sneak=1)
-    else:
-        # Place blocks
-        return _base_action(use=1, sneak=1)
+def _script_collect_grass(step: int) -> dict:
+    """Grass: shears in hotbar.1, tall_grass spawned at y+1 around player.
+    Shears on grass = attack (left click) to break, then pickup."""
+    if step == 0: return _base(**{"hotbar.1": 1})
+    c = step % 30
+    if c < 2: return _base(camera=[-3.0, 0.0])  # Look slightly up (grass is at y+1)
+    if c < 12: return _base(attack=1)  # Break grass
+    if c < 15: return _base(forward=1)  # Walk to pick up + find more
+    if c < 18: return _base(camera=[0.0, 30.0])  # Turn to find more grass
+    if c < 20: return _base(camera=[-3.0, 0.0])  # Look at grass level
+    return _base(attack=1)
 
 
-# === COMBAT ===
-
-def _script_combat(step: int, text: str) -> dict:
-    """Combat: select weapon, aggressively search and attack."""
-    text_lower = text.lower()
-
-    # Select weapon on first step
-    if step == 0:
-        # Most combat tasks give weapon in slot 1
-        return _base_action(**{"hotbar.1": 1})
-
-    # Aggressive search + attack pattern
-    cycle = step % 30
-
-    if cycle < 3:
-        # Scan: turn to find enemy
-        return _base_action(camera=[0.0, 30.0], attack=1)
-    elif cycle < 8:
-        # Sprint forward + attack (closes distance)
-        return _base_action(forward=1, sprint=1, attack=1)
-    elif cycle < 10:
-        # Jump + attack for critical hit
-        return _base_action(forward=1, jump=1, attack=1)
-    elif cycle < 18:
-        # Keep attacking while moving forward
-        return _base_action(forward=1, attack=1)
-    elif cycle < 20:
-        # Scan other direction
-        return _base_action(camera=[0.0, -40.0], attack=1)
-    elif cycle < 25:
-        # Sprint + attack
-        return _base_action(forward=1, sprint=1, attack=1)
-    elif cycle < 27:
-        # Look around more
-        return _base_action(camera=[-5.0, 20.0])
-    else:
-        # Sprint toward and attack
-        return _base_action(forward=1, sprint=1, jump=1, attack=1)
+def _script_collect_wood(step: int) -> dict:
+    """Wood: axe in hotbar.1, oak_log filled at ~1 ~ ~1 to ~5 ~10 ~5 (right in front+up).
+    Just face the logs and hold attack."""
+    if step == 0: return _base(**{"hotbar.1": 1})
+    c = step % 40
+    if c < 2: return _base(camera=[0.0, 0.0])  # Face forward (logs are in front)
+    if c < 25: return _base(attack=1)  # Chop wood
+    if c < 28: return _base(forward=1, jump=1)  # Pick up drops + get closer
+    if c < 30: return _base(camera=[5.0, 0.0])  # Adjust aim
+    return _base(attack=1)  # Keep chopping
 
 
-# === TOOL USE ===
+def _script_collect_wool(step: int) -> dict:
+    """Wool: shears in hotbar.1, sheep summoned at ~2 ~ ~.
+    Shears on sheep = USE (right click), not attack."""
+    if step == 0: return _base(**{"hotbar.1": 1})
+    c = step % 25
+    if c < 5: return _base(forward=1, camera=[0.0, 10.0])  # Walk toward sheep
+    if c < 15: return _base(use=1)  # Shear (right click)
+    if c < 18: return _base(camera=[0.0, 25.0])  # Turn to find more sheep
+    if c < 20: return _base(forward=1)  # Approach
+    return _base(use=1)
+
+
+def _script_mine_generic(step: int, text: str) -> dict:
+    """Generic mining for stone, ores etc."""
+    if step == 0: return _base(**{"hotbar.1": 1})
+    c = step % 40
+    if c < 2: return _base(camera=[3.0, 0.0])
+    if c < 22: return _base(attack=1, forward=1)
+    if c < 25: return _base(forward=1)
+    if c < 28: return _base(camera=[0.0, 40.0])
+    if c < 32: return _base(forward=1, sprint=1)
+    return _base(attack=1)
+
+
+# ============================================================
+# TOOL USE (task-specific)
+# ============================================================
 
 def _script_drink_potion(step: int) -> dict:
-    """Select potion from hotbar and drink it."""
-    cycle = step % 20
-    if cycle < 3:
-        slot = (step // 20) % 9 + 1
-        return _base_action(**{f"hotbar.{slot}": 1})
-    else:
-        return _base_action(use=1)  # Hold right click to drink
+    """Potion in hotbar.1. Hold use (right click) to drink."""
+    if step == 0: return _base(**{"hotbar.1": 1})
+    return _base(use=1)
 
 
 def _script_sleep_in_bed(step: int) -> dict:
-    """Find bed and sleep in it."""
-    phase = step % 30
-    if phase < 5:
-        # Look around for bed
-        return _base_action(camera=[5.0, 20.0])
-    elif phase < 10:
-        # Move toward bed
-        return _base_action(forward=1)
-    elif phase < 15:
-        # Look down at bed
-        return _base_action(camera=[10.0, 0.0])
-    else:
-        # Right click to sleep
-        return _base_action(use=1)
+    c = step % 30
+    if c < 5: return _base(camera=[5.0, 20.0])
+    if c < 10: return _base(forward=1)
+    if c < 15: return _base(camera=[10.0, 0.0])
+    return _base(use=1)
 
 
-def _script_use_flint(step: int) -> dict:
-    """Select flint and steel and use it."""
-    if step < 5:
-        return _base_action(**{"hotbar.1": 1})
-    elif step < 10:
-        return _base_action(camera=[10.0, 0.0])  # Look at ground
-    else:
-        return _base_action(use=1)
+def _script_make_fire(step: int) -> dict:
+    """Flint and steel already in mainhand (via /replaceitem). Look at ground + use."""
+    if step < 5: return _base(camera=[10.0, 0.0])  # Look at ground
+    return _base(use=1)  # Ignite
+
+
+def _script_use_bow(step: int) -> dict:
+    """Bow in hotbar.1, arrows in hotbar.2. Hold use to charge, release to shoot."""
+    if step == 0: return _base(**{"hotbar.1": 1})
+    c = step % 25
+    if c < 3: return _base(camera=[0.0, 15.0])  # Scan for target
+    if c < 5: return _base(camera=[-3.0, 0.0])  # Aim slightly up
+    if c < 15: return _base(use=1)  # Charge bow (hold right click)
+    if c == 15: return _base()  # Release to shoot (use=0)
+    if c < 18: return _base(camera=[0.0, 20.0])  # Scan for next target
+    if c < 20: return _base(camera=[-2.0, 0.0])
+    return _base(use=1)  # Charge again
+
+
+def _script_use_trident(step: int) -> dict:
+    """Trident in hotbar.1. Hold use to charge, release to throw."""
+    if step == 0: return _base(**{"hotbar.1": 1})
+    c = step % 20
+    if c < 3: return _base(camera=[0.0, 20.0])  # Look around
+    if c < 5: return _base(camera=[-3.0, 0.0])  # Aim
+    if c < 12: return _base(use=1)  # Charge
+    if c == 12: return _base()  # Release to throw
+    if c < 16: return _base(forward=1)  # Pick up trident
+    return _base(use=1)
+
+
+def _script_use_lead(step: int) -> dict:
+    """Lead in hotbar.1. Use on nearby animals."""
+    if step == 0: return _base(**{"hotbar.1": 1})
+    c = step % 20
+    if c < 5: return _base(forward=1, camera=[0.0, 15.0])
+    if c < 15: return _base(use=1)
+    return _base(forward=1, camera=[0.0, -20.0])
+
+
+def _script_use_shield(step: int) -> dict:
+    """Shield in hotbar.1. Hold use to block."""
+    if step == 0: return _base(**{"hotbar.1": 1})
+    c = step % 20
+    if c < 15: return _base(use=1)  # Block
+    return _base(camera=[0.0, 20.0])  # Look around between blocks
 
 
 def _script_plant(step: int) -> dict:
-    """Select seeds/hoe and plant."""
-    phase = step % 20
-    if phase == 0:
-        return _base_action(**{"hotbar.1": 1})  # Select hoe
-    elif phase < 5:
-        return _base_action(camera=[10.0, 0.0], attack=1)  # Till soil
-    elif phase < 8:
-        return _base_action(**{"hotbar.2": 1})  # Select seeds
-    elif phase < 12:
-        return _base_action(use=1, camera=[5.0, 0.0])  # Plant
-    elif phase < 15:
-        return _base_action(forward=1)  # Move to next spot
-    else:
-        return _base_action(use=1, camera=[5.0, 0.0])  # Plant more
+    c = step % 20
+    if c == 0: return _base(**{"hotbar.1": 1})
+    if c < 5: return _base(camera=[10.0, 0.0], attack=1)
+    if c < 8: return _base(**{"hotbar.2": 1})
+    if c < 12: return _base(use=1, camera=[5.0, 0.0])
+    if c < 15: return _base(forward=1)
+    return _base(use=1, camera=[5.0, 0.0])
 
 
 def _script_place_item(step: int) -> dict:
-    """Place an item frame or similar item on a surface."""
-    if step < 3:
-        return _base_action(**{"hotbar.1": 1})
-    elif step < 8:
-        return _base_action(camera=[0.0, 0.0])  # Look straight
-    else:
-        return _base_action(use=1)
+    if step < 3: return _base(**{"hotbar.1": 1})
+    if step < 8: return _base(camera=[0.0, 0.0])
+    return _base(use=1)
 
 
 def _script_carve_pumpkin(step: int) -> dict:
-    """Use shears on a pumpkin to carve it."""
-    phase = step % 30
-    if phase < 3:
-        return _base_action(**{"hotbar.1": 1})  # Select shears
-    elif phase < 8:
-        return _base_action(camera=[0.0, 15.0])  # Look around for pumpkin
-    elif phase < 15:
-        return _base_action(forward=1)  # Walk to pumpkin
-    elif phase < 20:
-        return _base_action(camera=[5.0, 0.0])  # Look at pumpkin
-    else:
-        return _base_action(use=1)  # Carve
+    """Pumpkin in hotbar.1 (inventory), shears in hotbar.2.
+    Step 1: place pumpkin on ground. Step 2: select shears. Step 3: use on pumpkin."""
+    if step < 3: return _base(**{"hotbar.1": 1})  # Select pumpkin
+    if step < 6: return _base(camera=[10.0, 0.0])  # Look at ground
+    if step < 12: return _base(use=1)  # Place pumpkin
+    if step < 15: return _base(**{"hotbar.2": 1})  # Select shears
+    if step < 18: return _base(camera=[-5.0, 0.0])  # Look at placed pumpkin
+    return _base(use=1)  # Carve with shears (right click)
 
 
-# === DECORATION ===
+# ============================================================
+# BUILDING
+# ============================================================
+
+def _script_dig_down(step: int) -> dict:
+    """Dig down and fill up."""
+    if step == 0: return _base(**{"hotbar.1": 1})
+    c = step % 40
+    if c < 3: return _base(camera=[10.0, 0.0])  # Look down
+    if c < 18: return _base(attack=1)  # Dig
+    if c < 20: return _base(camera=[-10.0, 0.0])
+    if c < 22: return _base(jump=1)
+    if c < 25: return _base(camera=[10.0, 0.0])
+    if c < 30: return _base(use=1, jump=1)  # Place block while jumping up
+    return _base(attack=1)
+
+
+def _script_build(step: int, text: str) -> dict:
+    """Building: place blocks in organized patterns for better video scores."""
+    text_lower = text.lower()
+
+    # Select material
+    if step == 0: return _base(**{"hotbar.1": 1})
+
+    if "pillar" in text_lower or "tower" in text_lower:
+        # Pillar/tower: look down + jump + place
+        c = step % 4
+        if c < 2: return _base(camera=[10.0, 0.0], jump=1, use=1, sneak=1)
+        return _base(jump=1, use=1, sneak=1)
+
+    if "wall" in text_lower:
+        # Wall: place in a line, then go up
+        c = step % 20
+        if c < 8: return _base(use=1, sneak=1)
+        if c < 12: return _base(forward=1, sneak=1)
+        if c < 14: return _base(camera=[0.0, 0.0])
+        return _base(use=1, sneak=1)
+
+    # Generic building: place blocks around
+    c = step % 25
+    if c < 3: return _base(camera=[8.0, 0.0])
+    if c < 8: return _base(use=1, sneak=1)
+    if c < 11: return _base(forward=1, sneak=1)
+    if c < 13: return _base(camera=[0.0, 20.0], sneak=1)
+    if c < 18: return _base(use=1, sneak=1)
+    if c < 21: return _base(right=1, sneak=1)
+    return _base(use=1, sneak=1)
+
+
+# ============================================================
+# COMBAT
+# ============================================================
+
+def _script_combat(step: int, text: str) -> dict:
+    if step == 0: return _base(**{"hotbar.1": 1})
+
+    c = step % 25
+    if c < 3: return _base(camera=[0.0, 35.0], attack=1)
+    if c < 8: return _base(forward=1, sprint=1, attack=1)
+    if c < 10: return _base(forward=1, jump=1, attack=1)
+    if c < 16: return _base(forward=1, attack=1)
+    if c < 18: return _base(camera=[0.0, -45.0], attack=1)
+    if c < 22: return _base(forward=1, sprint=1, attack=1)
+    return _base(forward=1, sprint=1, jump=1, attack=1)
+
+
+# ============================================================
+# DECORATION
+# ============================================================
 
 def _script_place_torches(step: int) -> dict:
-    """Place torches around."""
-    phase = step % 20
-    if phase == 0:
-        return _base_action(**{"hotbar.1": 1})  # Select torch
-    elif phase < 5:
-        return _base_action(use=1)  # Place torch
-    elif phase < 10:
-        return _base_action(forward=1, camera=[0.0, 30.0])  # Move and turn
-    elif phase < 15:
-        return _base_action(use=1)  # Place another torch
-    else:
-        return _base_action(forward=1, camera=[0.0, -20.0])
+    if step == 0: return _base(**{"hotbar.1": 1})
+    c = step % 15
+    if c < 3: return _base(camera=[5.0, 0.0])  # Look at surface
+    if c < 6: return _base(use=1)
+    if c < 10: return _base(forward=1, camera=[0.0, 25.0])
+    return _base(use=1)
 
 
 def _script_lay_carpet(step: int) -> dict:
-    """Place carpet blocks on ground."""
-    phase = step % 15
-    if phase == 0:
-        return _base_action(**{"hotbar.1": 1})  # Select carpet/wool
-    elif phase < 3:
-        return _base_action(camera=[10.0, 0.0])  # Look at ground
-    elif phase < 8:
-        return _base_action(use=1)  # Place
-    elif phase < 11:
-        return _base_action(forward=1)  # Move
-    else:
-        return _base_action(use=1)  # Place more
+    """Carpet in hotbar.3 (white_carpet is 3rd /give)."""
+    if step == 0: return _base(**{"hotbar.3": 1})
+    c = step % 12
+    if c < 2: return _base(camera=[10.0, 0.0])
+    if c < 6: return _base(use=1)
+    if c < 9: return _base(forward=1)
+    return _base(use=1)
 
 
 def _script_clean_weeds(step: int) -> dict:
-    """Break grass/weeds by attacking them."""
-    phase = step % 20
-    if phase < 5:
-        return _base_action(attack=1)  # Break weed
-    elif phase < 8:
-        return _base_action(forward=1, camera=[0.0, 15.0])  # Move to next
-    elif phase < 10:
-        return _base_action(camera=[3.0, 0.0])  # Look at ground
-    else:
-        return _base_action(attack=1)  # Break more
+    """Shears in hotbar.1, tall_grass at y+1 around player. Attack to break."""
+    if step == 0: return _base(**{"hotbar.1": 1})
+    c = step % 20
+    if c < 2: return _base(camera=[-3.0, 0.0])  # Look at grass level (y+1)
+    if c < 10: return _base(attack=1)
+    if c < 13: return _base(forward=1, camera=[0.0, 25.0])
+    if c < 15: return _base(camera=[-3.0, 0.0])
+    return _base(attack=1)
 
 
 def _script_decorate(step: int) -> dict:
-    """Place decorative items from hotbar."""
-    phase = step % 25
-    if phase == 0:
+    c = step % 25
+    if c == 0:
         slot = (step // 25) % 9 + 1
-        return _base_action(**{f"hotbar.{slot}": 1})  # Cycle through items
-    elif phase < 5:
-        return _base_action(camera=[8.0, 0.0])  # Look at placement spot
-    elif phase < 10:
-        return _base_action(use=1)  # Place
-    elif phase < 15:
-        return _base_action(forward=1, camera=[0.0, 20.0])  # Move and turn
-    elif phase < 20:
-        return _base_action(use=1)  # Place more
-    else:
-        return _base_action(right=1)  # Move sideways
+        return _base(**{f"hotbar.{slot}": 1})
+    if c < 3: return _base(camera=[8.0, 0.0])
+    if c < 8: return _base(use=1)
+    if c < 13: return _base(forward=1, camera=[0.0, 20.0])
+    if c < 18: return _base(use=1)
+    return _base(right=1)
 
 
-# === EXPLORATION ===
+# ============================================================
+# EXPLORATION
+# ============================================================
 
 def _script_explore(step: int) -> dict:
-    """Move around, look around, sprint to explore."""
-    phase = step % 40
-
-    if phase < 15:
-        # Sprint forward
-        return _base_action(forward=1, sprint=1)
-    elif phase < 18:
-        # Jump over obstacles
-        return _base_action(forward=1, jump=1)
-    elif phase < 23:
-        # Scan right
-        return _base_action(camera=[0.0, 25.0])
-    elif phase < 28:
-        # Sprint forward again
-        return _base_action(forward=1, sprint=1)
-    elif phase < 33:
-        # Scan left
-        return _base_action(camera=[0.0, -25.0])
-    elif phase < 36:
-        # Look around
-        return _base_action(camera=[-5.0, 15.0])
-    else:
-        # Continue forward
-        return _base_action(forward=1, sprint=1, jump=1)
+    c = step % 40
+    if c < 15: return _base(forward=1, sprint=1)
+    if c < 18: return _base(forward=1, jump=1)
+    if c < 23: return _base(camera=[0.0, 25.0])
+    if c < 28: return _base(forward=1, sprint=1)
+    if c < 33: return _base(camera=[0.0, -25.0])
+    if c < 36: return _base(camera=[-5.0, 15.0])
+    return _base(forward=1, sprint=1, jump=1)
