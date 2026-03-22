@@ -8,6 +8,7 @@ from collections import Counter
 
 from models import ActionPayload, NOOP_ACTION
 from prompts import SYSTEM_PROMPT, TASK_PROMPT_TEMPLATE, PLAN_PROMPT_TEMPLATE, get_task_strategy
+from scripts import get_scripted_action
 
 logger = logging.getLogger(__name__)
 
@@ -61,23 +62,38 @@ class MinecraftAgent:
         self.recent_action_hashes = []
         self.stuck_counter = 0
         self.current_subgoal_idx = 0
+        self.use_script = False
 
         # Determine max steps based on task complexity
         long_tasks = {"ender_dragon", "mine_diamond_from_scratch"}
         if any(t in text.lower() for t in long_tasks):
             self.max_steps = 12000
 
-        # Get task-specific strategy
-        self.task_strategy = get_task_strategy(text)
-
-        # Generate plan via LLM
-        self.plan = self._generate_plan(text)
-        logger.info(f"Task: {text}")
-        logger.info(f"Plan: {self.plan}")
+        # Check if we have a script for this task
+        test_action = get_scripted_action(text, 0)
+        if test_action is not None:
+            self.use_script = True
+            logger.info(f"Task: {text} [SCRIPTED MODE]")
+            self.plan = [text]
+        else:
+            # Get task-specific strategy
+            self.task_strategy = get_task_strategy(text)
+            # Generate plan via LLM
+            self.plan = self._generate_plan(text)
+            logger.info(f"Task: {text} [LLM MODE]")
+            logger.info(f"Plan: {self.plan}")
 
     def get_action(self, step: int, obs_b64: str) -> ActionPayload:
         """Given a step and base64-encoded observation image, return an action."""
         self.step_count = step
+
+        # Use scripted action if available (much faster and more reliable)
+        if self.use_script:
+            scripted = get_scripted_action(self.task_text, step)
+            if scripted is not None:
+                action = ActionPayload.from_env_dict(scripted)
+                self.last_action = action
+                return action
 
         # Skip LLM call if not on interval (repeat last action)
         if self.call_interval > 1 and step % self.call_interval != 0 and self.last_action:
