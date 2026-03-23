@@ -1,43 +1,43 @@
 {
   manifest_version: "0.1.0",
-
+  program: {
+    image: "ghcr.io/yunfeilu92/minecraft-purple-agent:latest",
+    entrypoint: [
+      "uv",
+      "run",
+      "src/server.py",
+      "--host",
+      "0.0.0.0",
+      "--port",
+      "9019"
+    ],
+    env: {
+      LLM_BACKEND: "bedrock",
+      LLM_MODEL: "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+      LLM_CALL_INTERVAL: "1",
+      AWS_ACCESS_KEY_ID: "${config.AWS_ACCESS_KEY_ID}",
+      AWS_SECRET_ACCESS_KEY: "${config.AWS_SECRET_ACCESS_KEY}",
+      AWS_REGION: "${config.AWS_REGION}"
+    },
+    network: {
+      endpoints: [
+        { name: "endpoint", port: 9019 }
+      ]
+    }
+  },
   config_schema: {
     type: "object",
     properties: {
-      aws_access_key_id: { type: "string", secret: true },
-      aws_secret_access_key: { type: "string", secret: true },
-      aws_region: { type: "string" },
+      AWS_ACCESS_KEY_ID: { type: "string", secret: true },
+      AWS_SECRET_ACCESS_KEY: { type: "string", secret: true },
+      AWS_REGION: { type: "string" }
     },
-    required: ["aws_access_key_id", "aws_secret_access_key"],
-    additionalProperties: false,
+    required: ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"]
   },
-
-  slots: {
-    proxy: { kind: "a2a", optional: true },
-  },
-
-  program: {
-    image: "ghcr.io/yunfeilu92/minecraft-purple-agent:latest",
-    entrypoint: "uv run src/server.py --host 0.0.0.0 --port 9019",
-
-    env: {
-      LLM_BACKEND: "bedrock",
-      LLM_MODEL: "us.anthropic.claude-opus-4-6-20260616-v1:0",
-      AWS_ACCESS_KEY_ID: "${config.aws_access_key_id}",
-      AWS_SECRET_ACCESS_KEY: "${config.aws_secret_access_key}",
-      AWS_REGION: "${config.aws_region || 'us-east-1'}",
-    },
-
-    network: {
-      endpoints: [
-        { name: "a2a_endpoint", port: 9019 },
-      ],
-    },
-  },
-
   provides: {
-    a2a: { kind: "a2a", endpoint: "a2a_endpoint" },
+    a2a: { kind: "a2a", endpoint: "endpoint" }
   },
-
-  exports: { a2a: "a2a" },
+  exports: {
+    a2a: "a2a"
+  }
 }
