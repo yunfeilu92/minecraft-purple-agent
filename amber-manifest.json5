@@ -17,7 +17,7 @@
       LLM_CALL_INTERVAL: "1",
       AWS_ACCESS_KEY_ID: "${config.aws_key}",
       AWS_SECRET_ACCESS_KEY: "${config.aws_secret}",
-      AWS_REGION: "${config.aws_region}"
+      AWS_REGION: "us-east-1"
     },
     network: {
       endpoints: [
@@ -29,8 +29,7 @@
     type: "object",
     properties: {
       aws_key: { type: "string", secret: true },
-      aws_secret: { type: "string", secret: true },
-      aws_region: { type: "string" }
+      aws_secret: { type: "string", secret: true }
     },
     required: ["aws_key", "aws_secret"]
   },
