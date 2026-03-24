@@ -15,9 +15,9 @@
       LLM_BACKEND: "bedrock",
       LLM_MODEL: "us.anthropic.claude-haiku-4-5-20251001-v1:0",
       LLM_CALL_INTERVAL: "1",
-      AWS_ACCESS_KEY_ID: "${config.AWS_ACCESS_KEY_ID}",
-      AWS_SECRET_ACCESS_KEY: "${config.AWS_SECRET_ACCESS_KEY}",
-      AWS_REGION: "${config.AWS_REGION}"
+      AWS_ACCESS_KEY_ID: "${config.aws_key}",
+      AWS_SECRET_ACCESS_KEY: "${config.aws_secret}",
+      AWS_REGION: "${config.aws_region}"
     },
     network: {
       endpoints: [
@@ -28,11 +28,11 @@
   config_schema: {
     type: "object",
     properties: {
-      AWS_ACCESS_KEY_ID: { type: "string", secret: true },
-      AWS_SECRET_ACCESS_KEY: { type: "string", secret: true },
-      AWS_REGION: { type: "string" }
+      aws_key: { type: "string", secret: true },
+      aws_secret: { type: "string", secret: true },
+      aws_region: { type: "string" }
     },
-    required: ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"]
+    required: ["aws_key", "aws_secret"]
   },
   provides: {
     a2a: { kind: "a2a", endpoint: "endpoint" }
